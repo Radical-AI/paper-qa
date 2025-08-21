@@ -5,7 +5,10 @@ import os
 from collections.abc import Awaitable, Callable
 from math import ceil
 from pathlib import Path
-from typing import Literal, Protocol, cast, overload, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, overload, runtime_checkable
+
+if TYPE_CHECKING:
+    from paperqa.settings import ParsingSettings
 
 import anyio
 import tiktoken
@@ -20,6 +23,7 @@ from paperqa.types import (
     ParsedText,
     Text,
 )
+from paperqa.multiprocessing_pdf import parse_pdf_with_multiprocessing
 from paperqa.utils import ImpossibleParsingError
 from paperqa.version import __version__ as pqa_version
 
@@ -281,6 +285,7 @@ async def read_doc(
     chunk_chars: int = ...,
     overlap: int = ...,
     parse_pdf: PDFParserFn | None = ...,
+    parsing_settings: "ParsingSettings | None" = ...,
     **parser_kwargs,
 ) -> ParsedText: ...
 @overload
@@ -292,6 +297,7 @@ async def read_doc(
     chunk_chars: int = ...,
     overlap: int = ...,
     parse_pdf: PDFParserFn | None = ...,
+    parsing_settings: "ParsingSettings | None" = ...,
     **parser_kwargs,
 ) -> ParsedText: ...
 @overload
@@ -303,6 +309,7 @@ async def read_doc(
     chunk_chars: int = ...,
     overlap: int = ...,
     parse_pdf: PDFParserFn | None = ...,
+    parsing_settings: "ParsingSettings | None" = ...,
     **parser_kwargs,
 ) -> tuple[list[Text], ParsedMetadata]: ...
 @overload
@@ -314,6 +321,7 @@ async def read_doc(
     chunk_chars: int = ...,
     overlap: int = ...,
     parse_pdf: PDFParserFn | None = ...,
+    parsing_settings: "ParsingSettings | None" = ...,
     **parser_kwargs,
 ) -> list[Text]: ...
 @overload
@@ -325,6 +333,7 @@ async def read_doc(
     chunk_chars: int = ...,
     overlap: int = ...,
     parse_pdf: PDFParserFn | None = ...,
+    parsing_settings: "ParsingSettings | None" = ...,
     **parser_kwargs,
 ) -> tuple[list[Text], ParsedMetadata]: ...
 async def read_doc(  # noqa: PLR0912
@@ -335,6 +344,7 @@ async def read_doc(  # noqa: PLR0912
     chunk_chars: int = 3000,
     overlap: int = 100,
     parse_pdf: PDFParserFn | None = None,
+    parsing_settings: "ParsingSettings | None" = None,
     **parser_kwargs,
 ) -> list[Text] | ParsedText | tuple[list[Text], ParsedMetadata]:
     """Parse a document and split into chunks.
@@ -348,6 +358,7 @@ async def read_doc(  # noqa: PLR0912
         chunk_chars: size of chunks
         overlap: size of overlap between chunks
         parse_pdf: Optional function to parse PDF files (if you're parsing a PDF).
+        parsing_settings: Optional parsing settings for multiprocessing configuration.
         parser_kwargs: Keyword arguments to pass to the used parsing function.
     """
     str_path = str(path)
@@ -356,9 +367,23 @@ async def read_doc(  # noqa: PLR0912
     if str_path.endswith(".pdf"):
         if parse_pdf is None:
             raise ValueError("When parsing a PDF, a parsing function must be provided.")
-        # Some PDF parsers are not thread-safe,
-        # so can't use multithreading via `asyncio.to_thread` here
-        parsed_text: ParsedText = parse_pdf(path, **parser_kwargs)
+        
+        # Check if multiprocessing is enabled for PDFs
+        if (parsing_settings and 
+            parsing_settings.multiprocessing_pool_enabled):
+            # Use multiprocessing pool to make PDF parsing non-blocking
+            parsed_text: ParsedText = await asyncio.to_thread(
+                parse_pdf_with_multiprocessing,
+                parse_pdf,
+                path,
+                use_multiprocessing=True,
+                max_workers=parsing_settings.multiprocessing_pool_size,
+                **parser_kwargs
+            )
+        else:
+            # Some PDF parsers are not thread-safe,
+            # so can't use multithreading via `asyncio.to_thread` here
+            parsed_text: ParsedText = parse_pdf(path, **parser_kwargs)
     elif str_path.endswith(".txt"):
         # TODO: Make parse_text async
         parsed_text = await asyncio.to_thread(parse_text, path, **parser_kwargs)

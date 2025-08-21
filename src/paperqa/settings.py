@@ -318,6 +318,14 @@ class ParsingSettings(BaseModel):
         default=False,
         description="Parse clinical trial JSONs into human readable text.",
     )
+    multiprocessing_pool_enabled: bool = Field(
+        default=False,
+        description="Whether to use multiprocessing pool for PDF parsing.",
+    )
+    multiprocessing_pool_size: int = Field(
+        default=4,
+        description="Size of the multiprocessing pool for PDF parsing.",
+    )
 
     def chunk_type(self, chunking_selection: ChunkingOptions | None = None) -> str:
         """Future chunking implementations (i.e. by section) will get an elif clause here."""

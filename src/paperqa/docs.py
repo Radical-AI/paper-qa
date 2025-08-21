@@ -283,6 +283,7 @@ class Docs(BaseModel):  # noqa: PLW1641  # TODO: add __hash__
                 use_block_parsing=parse_config.pdfs_use_block_parsing,
                 parse_images=parse_config.multimodal,
                 parse_pdf=parse_config.parse_pdf,
+                parsing_settings=parse_config,
             )
             if not texts or not texts[0].text.strip():
                 raise ValueError(f"Could not read document {path}. Is it empty?")
@@ -390,6 +391,7 @@ class Docs(BaseModel):  # noqa: PLW1641  # TODO: add __hash__
             use_block_parsing=parse_config.pdfs_use_block_parsing,
             parse_images=parse_config.multimodal,
             parse_pdf=parse_config.parse_pdf,
+            parsing_settings=parse_config,
             include_metadata=True,
         )
         # loose check to see if document was loaded
