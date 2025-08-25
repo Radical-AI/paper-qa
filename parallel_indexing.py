@@ -11,20 +11,19 @@ def index_with_default_setting(paper_dir: str) -> Settings:
                 paper_directory=paper_dir,
                 index_directory=f"{paper_dir}/index",
                 manifest_file=f"{paper_dir}/manifest.csv",
-                concurrency=12,
-                batch_size=2000,
+                concurrency=90, # set to number of CPUs
             )
         ),
         parsing=ParsingSettings(
             use_doc_details=False,
             defer_embedding=True,
-            multimodal=True,
             multiprocessing_pool_enabled=True,
-            multiprocessing_pool_size=12
+            multiprocessing_pool_size=90 # set to number of CPUs
         )
     )
     build_index(settings=settings)
 
 
 if __name__ == "__main__":
-    index_with_default_setting("/Users/kai/papers")
+    print("Starting indexing")
+    index_with_default_setting("/data/kai/radical-scratch/literature-warehouse/openalex")

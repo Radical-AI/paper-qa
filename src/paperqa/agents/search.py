@@ -9,6 +9,7 @@ import pathlib
 import pickle
 import re
 import sys
+import traceback
 import warnings
 import zlib
 from collections import Counter
@@ -17,7 +18,7 @@ from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import anyio
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, ValidationError
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -443,6 +444,45 @@ def fetch_kwargs_from_manifest(
     return {}
 
 
+def write_error_to_csv_sync(
+    file_location: str,
+    manifest: dict[str, Any],
+    manifest_fallback_location: str,
+    exception: Exception,
+    errors_csv_path: str,
+) -> None:
+    """Write error details to errors.csv file synchronously."""
+    # Get manifest entry (if it exists)
+    manifest_entry: dict[str, Any] | None = manifest.get(file_location) or manifest.get(
+        manifest_fallback_location
+    )
+    
+    # Prepare the error row - start with error info, then add manifest data
+    error_row = {
+        "file_location": file_location,
+        "exception_type": type(exception).__name__,
+        "exception_message": str(exception),
+        "exception_traceback": traceback.format_exc(),
+    }
+    
+    # Add manifest data if it exists (after error columns)
+    if manifest_entry:
+        # Create a copy to avoid modifying the original manifest
+        manifest_copy = dict(manifest_entry)
+        # Remove file_location to avoid duplicate column
+        manifest_copy.pop("file_location", None)
+        error_row.update(manifest_copy)
+    
+    # Write to CSV file
+    file_exists = os.path.exists(errors_csv_path)
+    
+    with open(errors_csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=error_row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(error_row)
+
+
 async def maybe_get_manifest(
     filename: anyio.Path | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -494,6 +534,7 @@ async def process_file(
     settings: Settings,
     processed_counter: Counter[str],
     progress_bar_update: Callable[[], Any] | None = None,
+    errors_csv_path: str | None = None,
 ) -> None:
 
     abs_file_path = (
@@ -511,12 +552,11 @@ async def process_file(
         if not await search_index.filecheck(filename=file_location):
             logger.info(f"New file to index: {file_location}...")
 
-            kwargs = fetch_kwargs_from_manifest(
-                file_location, manifest, manifest_fallback_location
-            )
-
             tmp_docs = Docs()
             try:
+                kwargs = fetch_kwargs_from_manifest(
+                    file_location, manifest, manifest_fallback_location
+                )
                 await tmp_docs.aadd(
                     path=abs_file_path,
                     fields=["title", "author", "journal", "year"],
@@ -531,15 +571,20 @@ async def process_file(
                 logger.exception(
                     f"Error parsing {file_location}, skipping index for this file."
                 )
+                
+                # Write error details to CSV if path is provided
+                if errors_csv_path:
+                    try:
+                        write_error_to_csv_sync(
+                            file_location, manifest, manifest_fallback_location, e, errors_csv_path
+                        )
+                    except Exception as csv_error:
+                        logger.warning(f"Failed to write error to CSV: {csv_error}")
+                
                 await search_index.mark_failed_document(file_location)
                 await search_index.save_index()
                 if progress_bar_update:
                     progress_bar_update()
-
-                if not isinstance(e, ValueError | ImpossibleParsingError):
-                    # ImpossibleParsingError: parsing failure, don't retry
-                    # ValueError: TODOC
-                    raise
                 return
 
             this_doc = next(iter(tmp_docs.docs.values()))
@@ -712,6 +757,10 @@ async def get_directory_index(  # noqa: PLR0912
     progress_bar, progress_bar_update_fn = _make_progress_bar_update(
         index_settings.sync_with_paper_directory, total=len(valid_papers_rel_file_paths)
     )
+    
+    # Set up errors.csv path in the same directory as the paper directory
+    errors_csv_path = str(pathlib.Path(index_settings.paper_directory) / "errors.csv")
+    
     with progress_bar:
         async with anyio.create_task_group() as tg:
             processed_counter: Counter[str] = Counter()
@@ -726,6 +775,7 @@ async def get_directory_index(  # noqa: PLR0912
                         _settings,
                         processed_counter,
                         progress_bar_update_fn,
+                        errors_csv_path,
                     )
                 else:
                     logger.debug(

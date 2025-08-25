@@ -47,7 +47,7 @@ class PDFProcessingPool:
         """
         if max_workers is None:
             # Conservative default: use at most 4 processes, but don't exceed CPU count
-            max_workers = min(4, os.cpu_count() or 1)
+            max_workers = os.cpu_count()
         
         self.max_workers = max_workers
         self._pool: ProcessPoolExecutor | None = None
@@ -175,5 +175,10 @@ def parse_pdf_with_multiprocessing(
     if not use_multiprocessing:
         return parser_func(path, **kwargs)
     
-    with PDFProcessingPool(max_workers=max_workers) as pool:
-        return pool.parse_pdf(parser_func, path, **kwargs)
+    # Use the global shared pool instead of creating a new one for each PDF
+    global _global_pdf_pool
+    if _global_pdf_pool is None:
+        _global_pdf_pool = PDFProcessingPool(max_workers=max_workers)
+        _global_pdf_pool.__enter__()  # Initialize the pool
+    
+    return _global_pdf_pool.parse_pdf(parser_func, path, **kwargs)
